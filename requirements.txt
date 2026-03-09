@@ -1,0 +1,10 @@
+# AutoGen multi-agent framework (0.4+ API)
+autogen-agentchat==0.7.5
+autogen-ext[openai]==0.7.5
+
+# Azure OpenAI SDK
+openai>=2.0.0
+
+# Utilities
+python-dotenv>=1.0.1
+numpy>=1.26.0

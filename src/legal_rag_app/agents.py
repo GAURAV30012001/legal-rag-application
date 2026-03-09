@@ -1,0 +1,89 @@
+"""Multi-agent legal RAG chat using AutoGen 0.4+ (autogen_agentchat 0.7.x)."""
+from __future__ import annotations
+
+import asyncio
+
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.conditions import MaxMessageTermination
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.ui import Console
+from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
+
+
+def _make_agent(name: str, system_message: str, model_client: AzureOpenAIChatCompletionClient) -> AssistantAgent:
+    return AssistantAgent(
+        name=name,
+        model_client=model_client,
+        system_message=system_message,
+    )
+
+
+def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroupChat:
+    """Create the four-agent legal team with a round-robin chat strategy."""
+    retriever = _make_agent(
+        "Retriever",
+        (
+            "You are a Retrieval Specialist. Your job is to read the provided context chunks carefully "
+            "and summarise the most relevant facts that help answer the user's legal question. "
+            "Do not give legal advice yourself; just highlight the key facts from the context."
+        ),
+        model_client,
+    )
+
+    analyst = _make_agent(
+        "LegalAnalyst",
+        (
+            "You are a Legal Analyst. Using the context and the Retriever's summary, provide a structured "
+            "legal analysis: identify applicable clauses, obligations, and potential interpretations. "
+            "Cite context chunks using [1], [2], etc. Flag any ambiguities or assumptions."
+        ),
+        model_client,
+    )
+
+    compliance = _make_agent(
+        "ComplianceOfficer",
+        (
+            "You are a Compliance Officer. Review the Legal Analyst's findings and identify compliance risks, "
+            "regulatory obligations, and any gaps or red flags the organisation should act on. "
+            "Be specific and reference the source chunks."
+        ),
+        model_client,
+    )
+
+    summarizer = _make_agent(
+        "Summarizer",
+        (
+            "You are a Legal Summarizer. Consolidate all previous agent outputs into a clear, concise final "
+            "answer for the user. Cite the relevant context chunk numbers in brackets. "
+            "End with: 'DISCLAIMER: This output is for informational purposes only and does not constitute legal advice.'"
+        ),
+        model_client,
+    )
+
+    # 4 agents × 1 message each + 1 initial user message = 5 total
+    termination = MaxMessageTermination(max_messages=5)
+
+    return RoundRobinGroupChat(
+        participants=[retriever, analyst, compliance, summarizer],
+        termination_condition=termination,
+    )
+
+
+async def _run_chat(model_client: AzureOpenAIChatCompletionClient, question: str, context: str) -> None:
+    team = build_team(model_client)
+    task = (
+        "You are a team of specialised legal agents. Work together to answer the question below.\n"
+        "Use the retrieved context and cite chunk numbers like [1], [2].\n\n"
+        f"QUESTION: {question}\n\n"
+        f"RETRIEVED CONTEXT:\n{context}"
+    )
+    await Console(team.run_stream(task=task))
+
+
+def run_agentic_chat(
+    model_client: AzureOpenAIChatCompletionClient,
+    question: str,
+    context: str,
+) -> None:
+    """Synchronous entry point — runs the async chat loop."""
+    asyncio.run(_run_chat(model_client, question, context))

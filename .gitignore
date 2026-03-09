@@ -1,0 +1,29 @@
+# Environment & secrets
+.env
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache
+
+# Build / distribution
+dist/
+build/
+*.egg-info/
+
+# Generated RAG index (rebuild on first run)
+data/index.json
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
