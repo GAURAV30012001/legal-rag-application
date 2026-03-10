@@ -85,5 +85,37 @@ def run_agentic_chat(
     question: str,
     context: str,
 ) -> None:
-    """Synchronous entry point — runs the async chat loop."""
+    """Synchronous entry point — runs the async chat loop (CLI)."""
     asyncio.run(_run_chat(model_client, question, context))
+
+
+async def run_agentic_chat_api(
+    model_client: AzureOpenAIChatCompletionClient,
+    question: str,
+    context: str,
+) -> dict:
+    """Async entry point for the Azure Function — returns structured dict."""
+    team = build_team(model_client)
+    task = (
+        "You are a team of specialised legal agents. Work together to answer the question below.\n"
+        "Use the retrieved context and cite chunk numbers like [1], [2].\n\n"
+        f"QUESTION: {question}\n\n"
+        f"RETRIEVED CONTEXT:\n{context}"
+    )
+    result = await team.run(task=task)
+
+    agent_responses = []
+    final_answer = ""
+    for msg in result.messages:
+        source = getattr(msg, "source", None)
+        content = getattr(msg, "content", "")
+        if source and source != "user":
+            agent_responses.append({"agent": source, "message": content})
+            if source == "Summarizer":
+                final_answer = content
+
+    return {
+        "question": question,
+        "agent_responses": agent_responses,
+        "final_answer": final_answer,
+    }
