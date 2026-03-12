@@ -34,15 +34,29 @@ python -m venv .venv
 
 # 2. Install dependencies
 pip install -r requirements.txt
+
+# 3. Install the package in editable mode (required for CLI; optional for func start)
 pip install -e .
 
-# 3. Configure Azure OpenAI
+# 4. Configure Azure OpenAI
 copy .env.example .env
 # Edit .env and fill in your values
 
-# 4. Run
+# 5. Run CLI
 python -m legal_rag_app --question "What are the key obligations in the NDA?"
 ```
+
+## Run as Azure Function (locally)
+
+```powershell
+# From project root with venv activated:
+$env:PYTHONPATH="$PWD\src"
+func start
+```
+
+Then call: `GET http://localhost:7071/api/query?question=What+are+the+NDA+obligations`
+
+> Note: `PYTHONPATH` is only needed if you skipped `pip install -e .`. The `function_app.py` also patches `sys.path` automatically so it works either way.
 
 ---
 

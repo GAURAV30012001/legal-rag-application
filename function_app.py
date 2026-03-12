@@ -3,6 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
+
+# Ensure src/ is on sys.path so legal_rag_app is importable
+# whether or not 'pip install -e .' was run (required for Azure Functions)
+_src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
 
 import azure.functions as func
 
