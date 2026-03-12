@@ -10,7 +10,7 @@ from legal_rag_app.agents import run_agentic_chat_api
 from legal_rag_app.config import build_model_client, load_config
 from legal_rag_app.rag import create_azure_client, format_context, retrieve_context
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 logger = logging.getLogger(__name__)
 
