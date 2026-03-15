@@ -27,3 +27,9 @@ data/index.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies
+Front_End_Application/node_modules/
+
+# Azure Function local secrets (contains real keys — never commit)
+local.settings.json
