@@ -626,20 +626,33 @@ async function uploadDocument() {
   const fileInput = document.getElementById("doc-file-input");
   const statusEl = document.getElementById("upload-status");
   if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-    statusEl.textContent = "Please select a .md or .txt file.";
+    statusEl.textContent = "Please select a .md, .txt, .pdf, or .docx file.";
     statusEl.style.color = "red";
     return;
   }
   const file = fileInput.files[0];
-  const content = await file.text();
+  const ext = file.name.split(".").pop().toLowerCase();
   statusEl.textContent = "Uploading...";
   statusEl.style.color = "#555";
   try {
-    const resp = await fetch(BACKEND_URL + "/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: file.name, content })
-    });
+    let resp;
+    if (ext === "pdf" || ext === "docx") {
+      // Binary files — send as multipart/form-data
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      resp = await fetch(BACKEND_URL + "/upload", {
+        method: "POST",
+        body: formData
+      });
+    } else {
+      // Text files (.md / .txt) — send as JSON
+      const content = await file.text();
+      resp = await fetch(BACKEND_URL + "/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content })
+      });
+    }
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || `Error ${resp.status}`);
     statusEl.textContent = `✅ '${file.name}' uploaded. Index will rebuild on next query.`;

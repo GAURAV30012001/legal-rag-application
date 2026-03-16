@@ -27,12 +27,31 @@ def create_azure_client(cfg: AppConfig) -> AzureOpenAI:
     )
 
 
+_SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
+
+
+def _extract_text(path: Path) -> str:
+    """Return plain text from .md/.txt/.pdf/.docx files."""
+    ext = path.suffix.lower()
+    if ext in (".md", ".txt"):
+        return path.read_text(encoding="utf-8")
+    if ext == ".pdf":
+        import pypdf  # lazy import — only needed when a PDF is present
+        reader = pypdf.PdfReader(str(path))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    if ext == ".docx":
+        import docx  # lazy import — python-docx
+        doc = docx.Document(str(path))
+        return "\n".join(para.text for para in doc.paragraphs)
+    return ""
+
+
 def load_documents(doc_dir: Path) -> List[tuple[str, str]]:
     documents: List[tuple[str, str]] = []
     for path in sorted(doc_dir.glob("**/*")):
-        if path.suffix.lower() not in {".md", ".txt"}:
+        if path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
             continue
-        content = path.read_text(encoding="utf-8")
+        content = _extract_text(path)
         documents.append((path.name, content))
     return documents
 
@@ -72,7 +91,7 @@ def _index_needs_rebuild(index_path: Path, files: List[Path]) -> bool:
 
 
 def build_or_load_index(cfg: AppConfig, client: AzureOpenAI) -> List[Chunk]:
-    doc_paths = [p for p in cfg.knowledge_base_dir.glob("**/*") if p.suffix.lower() in {".md", ".txt"}]
+    doc_paths = [p for p in cfg.knowledge_base_dir.glob("**/*") if p.suffix.lower() in _SUPPORTED_EXTENSIONS]
     if not doc_paths:
         raise ValueError("No documents found in data/knowledge_base")
 

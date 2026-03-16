@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart DB Agents Chat</title>
+    <title>Legal Rag Application</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -58,9 +58,9 @@
         <!-- Upload section -->
         <div class="modal-section">
           <h3>Upload Document</h3>
-          <p class="modal-hint">Accepted formats: <strong>.md</strong>, <strong>.txt</strong>. The index rebuilds automatically on the next query.</p>
+          <p class="modal-hint">Accepted formats: <strong>.md</strong>, <strong>.txt</strong>, <strong>.pdf</strong>, <strong>.docx</strong>. The index rebuilds automatically on the next query.</p>
           <div class="upload-row">
-            <input type="file" id="doc-file-input" accept=".md,.txt" />
+            <input type="file" id="doc-file-input" accept=".md,.txt,.pdf,.docx" />
             <button onclick="uploadDocument()">⬆ Upload</button>
           </div>
           <p id="upload-status" class="upload-status"></p>

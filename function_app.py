@@ -23,7 +23,7 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 logger = logging.getLogger(__name__)
 
 # Only these extensions are accepted for document uploads (prevents arbitrary file writes)
-_ALLOWED_EXTENSIONS = {".md", ".txt"}
+_ALLOWED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
 
 
 def _safe_filename(name: str) -> str | None:
@@ -93,15 +93,6 @@ def upload_document(req: func.HttpRequest) -> func.HttpResponse:
     The vector index is automatically rebuilt on the next /api/query call
     because the index cache checks file modification timestamps.
     """
-    try:
-        body = req.get_json()
-    except ValueError:
-        return func.HttpResponse(
-            json.dumps({"error": "Request body must be valid JSON."}),
-            status_code=400,
-            mimetype="application/json",
-        )
-
     content_type = req.headers.get("Content-Type", "")
 
     # ── Binary upload (PDF / DOCX) via multipart/form-data ──────────────────
