@@ -30,6 +30,23 @@ function escapeHTML(str) {
 /* ========= Backend config ========= */
 const BACKEND_URL = "http://localhost:7071/api";
 
+/* ========= Default welcome message ========= */
+const WELCOME_MSG = `Hello! I'm the **Legal RAG Assistant** 👋
+
+I can help you query and analyse your uploaded legal documents — contracts, NDAs, compliance policies, SLAs, and more.
+
+**To get started:**
+1. Click **📄 Manage Docs** in the sidebar to upload your legal documents (**.md, .txt, .pdf, .docx**)
+2. Once uploaded, ask me any question about the documents
+
+**Example questions you can ask:**
+- *"What are the confidentiality obligations in the NDA?"*
+- *"What is the notice period in the employment contract?"*
+- *"What GDPR rights does a data subject have?"*
+- *"What compliance risks exist in the SLA?"*
+
+How can I help you today?`;
+
 /* ========= Format agent API response as readable markdown ========= */
 function agentIcon(name) {
   const icons = { Retriever: "📋", LegalAnalyst: "⚖️", ComplianceOfficer: "🛡️", Summarizer: "📝" };
@@ -88,7 +105,7 @@ function loadSessions() {
       title: "Welcome",
       createdAt: nowTs(),
       messages: [
-        { sender: "bot", content: "Hi! Select or create a session to begin.", time: nowTs(), md: false, status: "final" }
+        { sender: "bot", content: WELCOME_MSG, time: nowTs(), md: true, status: "final" }
       ]
     };
     sessions = [bootstrapSession]; // <-- assign a flat array, do NOT .push([]) or nest arrays
@@ -454,7 +471,8 @@ function renderMessages(id) {
 
 /* ========= CRUD ========= */
 function createSession(title = " ") {
-  const s = { id: uid("s"), title, createdAt: nowTs(), messages: [] };
+  const welcomeMsg = { sender: "bot", content: WELCOME_MSG, time: nowTs(), md: true, status: "final" };
+  const s = { id: uid("s"), title, createdAt: nowTs(), messages: [welcomeMsg] };
   sessions.unshift(s);
   saveSessions(sessions);
 
@@ -464,6 +482,7 @@ function createSession(title = " ") {
   renderSessionList();
   chatContainer.innerHTML = "";
   activeSessionTitleEl.textContent = s.title;
+  renderMessages(activeSessionId);
 }
 
 function deleteSession(id) {

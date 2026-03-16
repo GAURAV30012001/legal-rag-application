@@ -18,6 +18,35 @@ from legal_rag_app.agents import run_agentic_chat_api
 from legal_rag_app.config import build_model_client, load_config
 from legal_rag_app.rag import create_azure_client, format_context, retrieve_context
 
+# ---------------------------------------------------------------------------
+# Small-talk / greeting detection
+# ---------------------------------------------------------------------------
+_SMALLTALK_PATTERNS = re.compile(
+    r"^\s*("
+    r"hi+|hello+|hey+|howdy|greetings|good\s*(morning|afternoon|evening|day)|"
+    r"what'?s?\s*up|sup|yo|hiya|"
+    r"thanks?(\s+you)?|thank\s*you|cheers|ty|"
+    r"ok(ay)?|sure|got\s*it|sounds?\s*good|great|cool|nice|awesome|"
+    r"bye|goodbye|see\s*you|cya|"
+    r"who\s*are\s*you|what\s*(are|can)\s*you\s*do|help|what\s*is\s*this"
+    r")\s*[!?.]*\s*$",
+    re.IGNORECASE,
+)
+
+_SMALLTALK_REPLY = (
+    "Hello! I'm the **Legal RAG Assistant**. I can help you query and analyse your "
+    "uploaded legal documents — contracts, NDAs, compliance policies, SLAs, and more.\n\n"
+    "Try asking something like:\n"
+    "- *\"What are the confidentiality obligations in the NDA?\"*\n"
+    "- *\"What is the notice period in the employment contract?\"*\n"
+    "- *\"What GDPR rights does a data subject have?\"*\n\n"
+    "Upload your documents via **📄 Manage Docs** and then ask away!"
+)
+
+
+def _is_smalltalk(text: str) -> bool:
+    return bool(_SMALLTALK_PATTERNS.match(text))
+
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 logger = logging.getLogger(__name__)
@@ -289,6 +318,19 @@ async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": "Missing 'question' parameter."}),
             status_code=400,
+            mimetype="application/json",
+        )
+
+    # --- Short-circuit: return a friendly reply for greetings / small talk ---
+    if _is_smalltalk(question):
+        return func.HttpResponse(
+            json.dumps({
+                "question": question,
+                "context_chunks": [],
+                "agent_responses": [],
+                "final_answer": _SMALLTALK_REPLY,
+            }, ensure_ascii=False, indent=2),
+            status_code=200,
             mimetype="application/json",
         )
 
