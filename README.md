@@ -62,20 +62,26 @@ Then call: `GET http://localhost:7071/api/query?question=What+are+the+NDA+obliga
 
 ## Configuration (.env)
 
-| Variable                             | Description                                           |
-| ------------------------------------ | ----------------------------------------------------- |
-| `AZURE_OPENAI_API_KEY`               | Your Azure OpenAI key                                 |
-| `AZURE_OPENAI_ENDPOINT`              | e.g. `https://myresource.openai.azure.com/`           |
-| `AZURE_OPENAI_API_VERSION`           | e.g. `2024-12-01-preview`                             |
-| `AZURE_OPENAI_DEPLOYMENT`            | Chat model deployment name (e.g. `gpt-4.1-mini`)      |
-| `AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT` | Embeddings deployment (e.g. `text-embedding-ada-002`) |
+| Variable                             | Description                                               |
+| ------------------------------------ | --------------------------------------------------------- |
+| `AZURE_OPENAI_API_KEY`               | Your Azure OpenAI key                                     |
+| `AZURE_OPENAI_ENDPOINT`              | e.g. `https://myresource.openai.azure.com/`               |
+| `AZURE_OPENAI_API_VERSION`           | e.g. `2024-12-01-preview`                                 |
+| `AZURE_OPENAI_DEPLOYMENT`            | Chat model deployment name (e.g. `gpt-4.1-mini`)          |
+| `AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT` | Embeddings deployment (e.g. `text-embedding-ada-002`)     |
+| `AZURE_STORAGE_CONNECTION_STRING`    | Optional: if set, docs + index are stored in Azure Blob   |
+| `AZURE_STORAGE_CONTAINER_DOCS`       | Optional: docs container name (default `legalrag-docs`)   |
+| `AZURE_STORAGE_CONTAINER_INDEX`      | Optional: index container name (default `legalrag-index`) |
+| `AZURE_STORAGE_INDEX_BLOB`           | Optional: index blob name (default `index.json`)          |
 
 ---
 
 ## Knowledge Base
 
 Sample legal documents are in `data/knowledge_base/` (`.md` / `.txt`).
-Add your own files and delete `data/index.json` to trigger a rebuild.
+Add your own files and delete `data/index.json` to trigger a rebuild when running locally.
+
+When `AZURE_STORAGE_CONNECTION_STRING` is set, uploads are stored in the blob container (`AZURE_STORAGE_CONTAINER_DOCS`), and the embedding index is saved to the index container/blob (`AZURE_STORAGE_CONTAINER_INDEX` / `AZURE_STORAGE_INDEX_BLOB`). The index rebuilds automatically on the first query after any document change.
 
 ---
 

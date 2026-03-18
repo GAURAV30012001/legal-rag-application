@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Dict
 
 import numpy as np
 from openai import AzureOpenAI
 
 from .config import AppConfig
+from .storage import StorageBackend
 
 
 @dataclass
@@ -30,30 +32,20 @@ def create_azure_client(cfg: AppConfig) -> AzureOpenAI:
 _SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
 
 
-def _extract_text(path: Path) -> str:
-    """Return plain text from .md/.txt/.pdf/.docx files."""
-    ext = path.suffix.lower()
+def _extract_text_from_bytes(filename: str, data: bytes) -> str:
+    """Return plain text from .md/.txt/.pdf/.docx bytes."""
+    ext = Path(filename).suffix.lower()
     if ext in (".md", ".txt"):
-        return path.read_text(encoding="utf-8")
+        return data.decode("utf-8", errors="ignore")
     if ext == ".pdf":
         import pypdf  # lazy import — only needed when a PDF is present
-        reader = pypdf.PdfReader(str(path))
+        reader = pypdf.PdfReader(io.BytesIO(data))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     if ext == ".docx":
         import docx  # lazy import — python-docx
-        doc = docx.Document(str(path))
+        doc = docx.Document(io.BytesIO(data))
         return "\n".join(para.text for para in doc.paragraphs)
     return ""
-
-
-def load_documents(doc_dir: Path) -> List[tuple[str, str]]:
-    documents: List[tuple[str, str]] = []
-    for path in sorted(doc_dir.glob("**/*")):
-        if path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
-            continue
-        content = _extract_text(path)
-        documents.append((path.name, content))
-    return documents
 
 
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 120) -> List[str]:
@@ -74,44 +66,46 @@ def get_embedding(client: AzureOpenAI, model: str, text: str) -> List[float]:
     return response.data[0].embedding
 
 
-def _file_mtimes(files: Iterable[Path]) -> dict:
-    return {str(path): path.stat().st_mtime for path in files}
-
-
-def _index_needs_rebuild(index_path: Path, files: List[Path]) -> bool:
-    if not index_path.exists():
-        return True
-    try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return True
-    meta = payload.get("meta", {}).get("files", {})
-    current = _file_mtimes(files)
-    return meta != current
+def _index_needs_rebuild(saved_meta: Dict, current_meta: Dict) -> bool:
+    return saved_meta != current_meta
 
 
 def build_or_load_index(cfg: AppConfig, client: AzureOpenAI) -> List[Chunk]:
-    doc_paths = [p for p in cfg.knowledge_base_dir.glob("**/*") if p.suffix.lower() in _SUPPORTED_EXTENSIONS]
-    if not doc_paths:
-        raise ValueError("No documents found in data/knowledge_base")
+    storage = StorageBackend(
+        connection_string=cfg.storage_connection_string,
+        kb_dir=cfg.knowledge_base_dir,
+        index_path=cfg.index_path,
+        docs_container=cfg.storage_container_docs,
+        index_container=cfg.storage_container_index,
+        index_blob_name=cfg.index_blob_name,
+        allowed_extensions=_SUPPORTED_EXTENSIONS,
+    )
 
-    if _index_needs_rebuild(cfg.index_path, doc_paths):
-        documents = load_documents(cfg.knowledge_base_dir)
+    docs_meta = storage.list_documents()
+    if not docs_meta:
+        raise ValueError("No documents found in knowledge base")
+
+    current_meta = {item["filename"]: item.get("last_modified", 0) for item in docs_meta}
+    payload = storage.load_index()
+    saved_meta = payload.get("meta", {}).get("files", {}) if payload else {}
+
+    if payload is None or _index_needs_rebuild(saved_meta, current_meta):
         chunks: List[Chunk] = []
-        for name, content in documents:
+        for doc in docs_meta:
+            name = doc["filename"]
+            data = storage.download_document(name)
+            content = _extract_text_from_bytes(name, data)
             for idx, chunk in enumerate(chunk_text(content)):
                 embedding = get_embedding(client, cfg.azure_openai_embeddings_deployment, chunk)
                 chunks.append(Chunk(chunk_id=f"{name}-{idx}", source=name, text=chunk, embedding=embedding))
 
         payload = {
-            "meta": {"files": _file_mtimes(doc_paths)},
+            "meta": {"files": current_meta},
             "chunks": [chunk.__dict__ for chunk in chunks],
         }
-        cfg.index_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg.index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        storage.save_index(payload)
         return chunks
 
-    payload = json.loads(cfg.index_path.read_text(encoding="utf-8"))
     return [Chunk(**item) for item in payload.get("chunks", [])]
 
 

@@ -17,6 +17,7 @@ import azure.functions as func
 from legal_rag_app.agents import run_agentic_chat_api
 from legal_rag_app.config import build_model_client, load_config
 from legal_rag_app.rag import create_azure_client, format_context, retrieve_context
+from legal_rag_app.storage import StorageBackend
 
 # ---------------------------------------------------------------------------
 # Small-talk / greeting detection
@@ -55,6 +56,18 @@ logger = logging.getLogger(__name__)
 _ALLOWED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
 
 
+def _get_storage(cfg):
+    return StorageBackend(
+        connection_string=cfg.storage_connection_string,
+        kb_dir=cfg.knowledge_base_dir,
+        index_path=cfg.index_path,
+        docs_container=cfg.storage_container_docs,
+        index_container=cfg.storage_container_index,
+        index_blob_name=cfg.index_blob_name,
+        allowed_extensions=_ALLOWED_EXTENSIONS,
+    )
+
+
 def _safe_filename(name: str) -> str | None:
     """Return a sanitised filename, or None if the name is unsafe/disallowed.
 
@@ -84,15 +97,8 @@ def list_documents(req: func.HttpRequest) -> func.HttpResponse:
     """
     try:
         cfg = load_config()
-        kb_dir = cfg.knowledge_base_dir
-        files = []
-        for path in sorted(kb_dir.glob("**/*")):
-            if path.suffix.lower() in _ALLOWED_EXTENSIONS:
-                files.append({
-                    "filename": path.name,
-                    "size_bytes": path.stat().st_size,
-                    "last_modified": path.stat().st_mtime,
-                })
+        storage = _get_storage(cfg)
+        files = storage.list_documents()
         return func.HttpResponse(
             json.dumps({"documents": files, "count": len(files)}, indent=2),
             status_code=200,
@@ -141,9 +147,8 @@ def upload_document(req: func.HttpRequest) -> func.HttpResponse:
             )
         try:
             cfg = load_config()
-            dest = cfg.knowledge_base_dir / safe_name
-            dest.write_bytes(file_bytes.read())
-            size = dest.stat().st_size
+            storage = _get_storage(cfg)
+            size = storage.upload_document(safe_name, file_bytes.read())
             logger.info("Uploaded binary document: %s (%d bytes)", safe_name, size)
         except Exception as exc:
             logger.exception("Error saving binary document %s", safe_name)
@@ -197,9 +202,9 @@ def upload_document(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         cfg = load_config()
-        dest = cfg.knowledge_base_dir / safe_name
-        dest.write_text(content, encoding="utf-8")
-        logger.info("Uploaded document: %s (%d bytes)", safe_name, len(content.encode("utf-8")))
+        storage = _get_storage(cfg)
+        size_bytes = storage.upload_document(safe_name, content.encode("utf-8"), content_type="text/plain")
+        logger.info("Uploaded document: %s (%d bytes)", safe_name, size_bytes)
     except Exception as exc:
         logger.exception("Error saving document %s", safe_name)
         return func.HttpResponse(
@@ -213,7 +218,7 @@ def upload_document(req: func.HttpRequest) -> func.HttpResponse:
             "message": f"Document '{safe_name}' uploaded successfully. "
                        "The index will be rebuilt automatically on the next query.",
             "filename": safe_name,
-            "size_bytes": len(content.encode("utf-8")),
+            "size_bytes": size_bytes,
         }, indent=2),
         status_code=201,
         mimetype="application/json",
@@ -258,14 +263,8 @@ def delete_document(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         cfg = load_config()
-        target = cfg.knowledge_base_dir / safe_name
-        if not target.exists():
-            return func.HttpResponse(
-                json.dumps({"error": f"Document '{safe_name}' not found."}),
-                status_code=404,
-                mimetype="application/json",
-            )
-        target.unlink()
+        storage = _get_storage(cfg)
+        storage.delete_document(safe_name)
         logger.info("Deleted document: %s", safe_name)
     except Exception as exc:
         logger.exception("Error deleting document %s", safe_name)

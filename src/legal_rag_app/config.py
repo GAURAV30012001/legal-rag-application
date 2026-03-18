@@ -17,6 +17,10 @@ class AppConfig:
     azure_openai_embeddings_deployment: str
     knowledge_base_dir: Path
     index_path: Path
+    storage_connection_string: str | None
+    storage_container_docs: str
+    storage_container_index: str
+    index_blob_name: str
 
 
 def _get_env(name: str) -> str:
@@ -26,10 +30,20 @@ def _get_env(name: str) -> str:
     return value
 
 
+def _get_env_optional(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    return value or None
+
+
 def load_config() -> AppConfig:
     project_root = Path(__file__).resolve().parents[2]
     knowledge_base_dir = project_root / "data" / "knowledge_base"
     index_path = project_root / "data" / "index.json"
+
+    storage_connection_string = _get_env_optional("AZURE_STORAGE_CONNECTION_STRING")
+    storage_container_docs = os.getenv("AZURE_STORAGE_CONTAINER_DOCS", "legalrag-docs")
+    storage_container_index = os.getenv("AZURE_STORAGE_CONTAINER_INDEX", "legalrag-index")
+    index_blob_name = os.getenv("AZURE_STORAGE_INDEX_BLOB", "index.json")
 
     return AppConfig(
         azure_openai_api_key=_get_env("AZURE_OPENAI_API_KEY"),
@@ -39,6 +53,10 @@ def load_config() -> AppConfig:
         azure_openai_embeddings_deployment=_get_env("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT"),
         knowledge_base_dir=knowledge_base_dir,
         index_path=index_path,
+        storage_connection_string=storage_connection_string,
+        storage_container_docs=storage_container_docs,
+        storage_container_index=storage_container_index,
+        index_blob_name=index_blob_name,
     )
 
 

@@ -653,6 +653,10 @@ Ask a legal question. This is the main endpoint.
 | `AZURE_OPENAI_API_VERSION`           | API version (e.g. `2024-12-01-preview`)                        |
 | `AZURE_OPENAI_CHAT_DEPLOYMENT`       | Deployment name for chat model (e.g. `gpt-4.1-mini`)           |
 | `AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT` | Deployment name for embeddings (e.g. `text-embedding-ada-002`) |
+| `AZURE_STORAGE_CONNECTION_STRING`    | Optional: if set, docs + index are stored in Azure Blob        |
+| `AZURE_STORAGE_CONTAINER_DOCS`       | Optional: docs container (default `legalrag-docs`)             |
+| `AZURE_STORAGE_CONTAINER_INDEX`      | Optional: index container (default `legalrag-index`)           |
+| `AZURE_STORAGE_INDEX_BLOB`           | Optional: index blob name (default `index.json`)               |
 | `Host.CORS`                          | Allowed frontend origin (e.g. `http://localhost:8080`)         |
 
 ### `host.json` (Azure Functions runtime)
@@ -755,14 +759,14 @@ Stop-Process -Id (Get-NetTCPConnection -LocalPort 7071 -ErrorAction SilentlyCont
 
 These are important points for engineers deploying or maintaining this application.
 
-| Topic                       | Details                                                                                                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Secrets management**      | `local.settings.json` and `.env` are in `.gitignore` and must never be committed. Use Azure Key Vault or environment variables for cloud deployment.          |
-| **File upload validation**  | Only `.md`, `.txt`, `.pdf`, `.docx` files are accepted. Filenames are sanitised against path traversal attacks (e.g. `../../etc/passwd` is rejected).         |
-| **Authentication**          | The local dev setup uses `AuthLevel.ANONYMOUS`. For production, implement Azure AD authentication or API key validation.                                      |
-| **CORS**                    | Restricted to `http://localhost:8080` in local settings. Update for production domain.                                                                        |
-| **Data stays private**      | Documents are stored locally in `data/knowledge_base/`. They are never sent to any external service except Azure OpenAI (which processes them for embedding). |
-| **No SQL / injection risk** | There is no database. Document storage is plain file I/O.                                                                                                     |
+| Topic                       | Details                                                                                                                                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Secrets management**      | `local.settings.json` and `.env` are in `.gitignore` and must never be committed. Use Azure Key Vault or environment variables for cloud deployment.                                                                                    |
+| **File upload validation**  | Only `.md`, `.txt`, `.pdf`, `.docx` files are accepted. Filenames are sanitised against path traversal attacks (e.g. `../../etc/passwd` is rejected).                                                                                   |
+| **Authentication**          | The local dev setup uses `AuthLevel.ANONYMOUS`. For production, implement Azure AD authentication or API key validation.                                                                                                                |
+| **CORS**                    | Restricted to `http://localhost:8080` in local settings. Update for production domain.                                                                                                                                                  |
+| **Data stays private**      | When storage is not configured, documents live in `data/knowledge_base/`. With blob storage enabled, documents and index are stored in your Azure Blob containers. In all cases, data is only sent to Azure OpenAI for embeddings/chat. |
+| **No SQL / injection risk** | There is no database. Document storage is plain file I/O.                                                                                                                                                                               |
 
 ---
 

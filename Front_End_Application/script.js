@@ -28,7 +28,11 @@ function escapeHTML(str) {
 }
 
 /* ========= Backend config ========= */
-const BACKEND_URL = "http://localhost:7071/api";
+// If running locally, talk to local Functions; otherwise use deployed Function App
+const HOSTED_BACKEND_URL = "https://db-agent-c8etaydadhhgh7ay.eastus-01.azurewebsites.net/api";
+const BACKEND_URL = window.location.hostname === "localhost"
+  ? "http://localhost:7071/api"
+  : HOSTED_BACKEND_URL;
 
 /* ========= Default welcome message ========= */
 const WELCOME_MSG = `Hello! I'm the **Legal RAG Assistant** 👋
@@ -169,6 +173,15 @@ const MSG_STATUS = {
   PENDING: "pending", // interim / streaming
   FINAL: "final"    // completed
 };
+
+// Track timers for provisional bubbles so we can show elapsed time while the backend works
+const provisionalTimers = new Map();
+
+function clearProvisionalTimer(id) {
+  const t = provisionalTimers.get(id);
+  if (t) clearInterval(t);
+  provisionalTimers.delete(id);
+}
 
 /* ========= RIGHT panel bubbles ========= */
 function createUserBubble(content, time, isMarkdown = false) {
@@ -404,9 +417,16 @@ function renderMessages(id) {
   session.messages.forEach((m, idx) => {
     // Render provisional bubble with loader while streaming
     if (m.sender === "bot" && m._provisional === true) {
+      const pendingId = m.id || m._pendingId || uid("pending");
+      m.id = pendingId;
+      m._pendingId = pendingId;
+      const startTs = m.time || nowTs();
+      m.time = startTs;
+
       const botWrapper = document.createElement("div");
       botWrapper.classList.add("message", "bot");
       botWrapper.setAttribute("data-provisional-index", String(idx));
+      botWrapper.dataset.pendingId = pendingId;
 
       const icon = document.createElement("div");
       icon.className = "bot-icon";
@@ -417,10 +437,11 @@ function renderMessages(id) {
 
       const responseArea = document.createElement("div");
       responseArea.className = "response-area";
+      const baseContent = m.content || "Analyzing your question...";
       if (m.md && window.marked && typeof marked.parse === "function") {
-        responseArea.innerHTML = marked.parse(m.content || "");
+        responseArea.innerHTML = marked.parse(baseContent);
       } else {
-        responseArea.textContent = m.content || "";
+        responseArea.textContent = baseContent;
       }
       thinkingContent.appendChild(responseArea);
 
@@ -459,6 +480,17 @@ function renderMessages(id) {
       botWrapper.appendChild(timeSpan);
 
       chatContainer.appendChild(botWrapper);
+
+      // Show a running timer so the UI never looks frozen
+      clearProvisionalTimer(pendingId);
+      const tick = () => {
+        const elapsedSec = Math.max(0, Math.floor((Date.now() - startTs) / 1000));
+        thinkingText.textContent = `Analyzing... ${elapsedSec}s`;
+      };
+      tick();
+      const timerId = setInterval(tick, 1000);
+      provisionalTimers.set(pendingId, timerId);
+
       chatContainer.scrollTop = chatContainer.scrollHeight;
     } else {
       const isMd = m.md === true || m.sender === "bot";
@@ -552,6 +584,7 @@ let sending = false;
 async function sendMessage(e) {
   if (sending) return;
   sending = true;
+  sendBtnEl?.setAttribute("disabled", "true");
   try {
     const message = (userInput1?.value || "").trim();
     if (!message) return;
@@ -566,7 +599,17 @@ async function sendMessage(e) {
     if (userInput1) userInput1.value = "";
 
     // 2) create provisional bot message IN STORAGE (so list ignores it) and IN UI
-    const provisionalMsg = { sender: "bot", content: "", time: "", md: true, _provisional: true, status: MSG_STATUS.PENDING };
+    const provisionalId = uid("pending");
+    const startTs = nowTs();
+    const provisionalMsg = {
+      id: provisionalId,
+      sender: "bot",
+      content: "Analyzing your question...",
+      time: startTs,
+      md: true,
+      _provisional: true,
+      status: MSG_STATUS.PENDING
+    };
     sessRef.messages.push(provisionalMsg);
     saveSessions(sessions);
     renderSessionList();               // list will ignore pending/provisional entries
@@ -595,6 +638,7 @@ async function sendMessage(e) {
       sessRef.messages[provisionalIndex].time = nowTs();
       sessRef.messages[provisionalIndex]._provisional = false;
       sessRef.messages[provisionalIndex].status = MSG_STATUS.FINAL;
+      clearProvisionalTimer(provisionalId);
       saveSessions(sessions);
       renderSessionList();
 
@@ -607,6 +651,7 @@ async function sendMessage(e) {
       sessRef.messages[provisionalIndex].time = nowTs();
       sessRef.messages[provisionalIndex]._provisional = false;
       sessRef.messages[provisionalIndex].status = MSG_STATUS.FINAL;
+      clearProvisionalTimer(provisionalId);
       saveSessions(sessions);
       renderSessionList();
 
@@ -614,6 +659,7 @@ async function sendMessage(e) {
     }
   } finally {
     sending = false;
+    sendBtnEl?.removeAttribute("disabled");
   }
 }
 
