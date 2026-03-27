@@ -6,6 +6,9 @@ __pycache__
 local.settings.json
 *.pyc
 .vscode
+# pyproject.toml must NOT be deployed — its presence triggers Oryx PEP-517 build
+# which conflicts with requirements.txt and breaks the Python function worker.
+pyproject.toml
 # Exclude stray host.json inside src/ — only the root host.json should be deployed
 src/host.json
 src/*.egg-info
