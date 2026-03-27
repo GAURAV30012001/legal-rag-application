@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 
 # Ensure the src/ package is importable without `pip install -e .`
 _src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
@@ -35,12 +36,12 @@ _SMALLTALK_PATTERNS = re.compile(
 )
 
 _SMALLTALK_REPLY = (
-    "Hello! I'm the **Legal RAG Assistant**. I can help you query and analyse your "
-    "uploaded legal documents — contracts, NDAs, compliance policies, SLAs, and more.\n\n"
+    "Hello! I'm the **RAG Document Assistant**. I can help you query and analyse any "
+    "documents you upload — legal contracts, technical specs, HR policies, compliance documents, and more.\n\n"
     "Try asking something like:\n"
-    "- *\"What are the confidentiality obligations in the NDA?\"*\n"
-    "- *\"What is the notice period in the employment contract?\"*\n"
-    "- *\"What GDPR rights does a data subject have?\"*\n\n"
+    "- *\"What are the key obligations in this contract?\"*\n"
+    "- *\"Summarise the main points of this policy.\"*\n"
+    "- *\"What are the technical requirements mentioned?\"*\n\n"
     "Upload your documents via **📄 Manage Docs** and then ask away!"
 )
 
@@ -56,7 +57,7 @@ logger = logging.getLogger(__name__)
 _ALLOWED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
 
 
-def _get_storage(cfg):
+def _get_storage(cfg, user_prefix: str = ""):
     return StorageBackend(
         connection_string=cfg.storage_connection_string,
         kb_dir=cfg.knowledge_base_dir,
@@ -65,6 +66,44 @@ def _get_storage(cfg):
         index_container=cfg.storage_container_index,
         index_blob_name=cfg.index_blob_name,
         allowed_extensions=_ALLOWED_EXTENSIONS,
+        user_prefix=user_prefix,
+    )
+
+
+def _extract_user_id(req: func.HttpRequest) -> str:
+    """Extract the caller's user ID from X-User-Id header.
+
+    Validates it is a proper UUID to prevent path-traversal attacks.
+    Falls back to 'shared' when the header is absent or invalid.
+    """
+    raw = req.headers.get("X-User-Id", "").strip()
+    try:
+        return str(uuid.UUID(raw))
+    except (ValueError, AttributeError):
+        return "shared"
+
+
+# ---------------------------------------------------------------------------
+# CORS helpers — required for cross-origin calls from the deployed Web App
+# ---------------------------------------------------------------------------
+def _cors_headers() -> dict:
+    origin = os.getenv("CORS_ALLOWED_ORIGIN", "*")
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-functions-key, X-User-Id",
+        "Access-Control-Max-Age": "86400",
+    }
+
+
+def _preflight() -> func.HttpResponse:
+    return func.HttpResponse("", status_code=200, headers=_cors_headers())
+
+
+def _json_resp(body: str, status_code: int = 200) -> func.HttpResponse:
+    """Return a JSON HttpResponse with CORS headers pre-attached."""
+    return func.HttpResponse(
+        body, status_code=status_code, mimetype="application/json", headers=_cors_headers()
     )
 
 
@@ -89,131 +128,102 @@ def _safe_filename(name: str) -> str | None:
 # Document management endpoints
 # ---------------------------------------------------------------------------
 
-@app.route(route="documents", methods=["GET"])
+@app.route(route="documents", methods=["GET", "OPTIONS"])
 def list_documents(req: func.HttpRequest) -> func.HttpResponse:
     """
     GET /api/documents
     Returns a list of all documents currently in the knowledge base.
     """
+    if req.method == "OPTIONS":
+        return _preflight()
     try:
+        user_id = _extract_user_id(req)
         cfg = load_config()
-        storage = _get_storage(cfg)
+        storage = _get_storage(cfg, user_id)
         files = storage.list_documents()
-        return func.HttpResponse(
-            json.dumps({"documents": files, "count": len(files)}, indent=2),
-            status_code=200,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"documents": files, "count": len(files)}, indent=2))
     except Exception as exc:
         logger.exception("Error listing documents")
-        return func.HttpResponse(
+        return _json_resp(
             json.dumps({"error": "Could not list documents.", "detail": str(exc)}),
             status_code=500,
-            mimetype="application/json",
         )
 
 
-@app.route(route="upload", methods=["POST"])
+@app.route(route="upload", methods=["POST", "OPTIONS"])
 def upload_document(req: func.HttpRequest) -> func.HttpResponse:
     """
     POST /api/upload
     Upload a new document to the knowledge base.
-
-    JSON body:
-      {
-        "filename": "my_contract.md",   // must end in .md or .txt
-        "content":  "Full text of the document..."
-      }
-
-    The vector index is automatically rebuilt on the next /api/query call
-    because the index cache checks file modification timestamps.
     """
+    if req.method == "OPTIONS":
+        return _preflight()
+
     content_type = req.headers.get("Content-Type", "")
 
     # ── Binary upload (PDF / DOCX) via multipart/form-data ──────────────────
     if "multipart/form-data" in content_type:
         file_bytes = req.files.get("file") if req.files else None
         if file_bytes is None:
-            return func.HttpResponse(
-                json.dumps({"error": "Missing 'file' field in form data."}),
-                status_code=400, mimetype="application/json",
-            )
+            return _json_resp(json.dumps({"error": "Missing 'file' field in form data."}), status_code=400)
         raw_filename = file_bytes.filename or ""
         safe_name = _safe_filename(raw_filename)
         if safe_name is None:
-            return func.HttpResponse(
+            return _json_resp(
                 json.dumps({"error": f"Invalid or disallowed filename '{raw_filename}'. Allowed: .md .txt .pdf .docx"}),
-                status_code=400, mimetype="application/json",
+                status_code=400,
             )
         try:
+            user_id = _extract_user_id(req)
             cfg = load_config()
-            storage = _get_storage(cfg)
+            storage = _get_storage(cfg, user_id)
             size = storage.upload_document(safe_name, file_bytes.read())
             logger.info("Uploaded binary document: %s (%d bytes)", safe_name, size)
         except Exception as exc:
             logger.exception("Error saving binary document %s", safe_name)
-            return func.HttpResponse(
-                json.dumps({"error": "Could not save document.", "detail": str(exc)}),
-                status_code=500, mimetype="application/json",
-            )
-        return func.HttpResponse(
+            return _json_resp(json.dumps({"error": "Could not save document.", "detail": str(exc)}), status_code=500)
+        return _json_resp(
             json.dumps({"message": f"Document '{safe_name}' uploaded successfully. Index rebuilds on next query.",
                         "filename": safe_name, "size_bytes": size}, indent=2),
-            status_code=201, mimetype="application/json",
+            status_code=201,
         )
 
     # ── JSON upload (.md / .txt text content) ───────────────────────────────
     try:
         body = req.get_json()
     except ValueError:
-        return func.HttpResponse(
-            json.dumps({"error": "Request body must be valid JSON."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Request body must be valid JSON."}), status_code=400)
 
     raw_filename = body.get("filename", "").strip()
     content: str = body.get("content", "").strip()
 
     if not raw_filename:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing 'filename' field."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Missing 'filename' field."}), status_code=400)
     if not content:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing 'content' field."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Missing 'content' field."}), status_code=400)
 
     safe_name = _safe_filename(raw_filename)
     if safe_name is None:
-        return func.HttpResponse(
+        return _json_resp(
             json.dumps({
                 "error": f"Invalid filename '{raw_filename}'. "
                          "Allowed extensions: .md .txt .pdf .docx. "
                          "Filename must contain only letters, numbers, spaces, hyphens, and underscores."
             }),
             status_code=400,
-            mimetype="application/json",
         )
 
     try:
+        user_id = _extract_user_id(req)
         cfg = load_config()
-        storage = _get_storage(cfg)
+        storage = _get_storage(cfg, user_id)
         size_bytes = storage.upload_document(safe_name, content.encode("utf-8"), content_type="text/plain")
         logger.info("Uploaded document: %s (%d bytes)", safe_name, size_bytes)
     except Exception as exc:
         logger.exception("Error saving document %s", safe_name)
-        return func.HttpResponse(
-            json.dumps({"error": "Could not save document.", "detail": str(exc)}),
-            status_code=500,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Could not save document.", "detail": str(exc)}), status_code=500)
 
-    return func.HttpResponse(
+    return _json_resp(
         json.dumps({
             "message": f"Document '{safe_name}' uploaded successfully. "
                        "The index will be rebuilt automatically on the next query.",
@@ -221,11 +231,10 @@ def upload_document(req: func.HttpRequest) -> func.HttpResponse:
             "size_bytes": size_bytes,
         }, indent=2),
         status_code=201,
-        mimetype="application/json",
     )
 
 
-@app.route(route="documents/delete", methods=["POST"])
+@app.route(route="documents/delete", methods=["POST", "OPTIONS"])
 def delete_document(req: func.HttpRequest) -> func.HttpResponse:
     """
     POST /api/documents/delete
@@ -236,52 +245,43 @@ def delete_document(req: func.HttpRequest) -> func.HttpResponse:
 
     The vector index is automatically rebuilt on the next /api/query call.
     """
+    if req.method == "OPTIONS":
+        return _preflight()
+
     try:
         body = req.get_json()
     except ValueError:
-        return func.HttpResponse(
-            json.dumps({"error": "Request body must be valid JSON."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Request body must be valid JSON."}), status_code=400)
 
     raw_filename = body.get("filename", "").strip()
     if not raw_filename:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing 'filename' field."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Missing 'filename' field."}), status_code=400)
 
     safe_name = _safe_filename(raw_filename)
     if safe_name is None:
-        return func.HttpResponse(
-            json.dumps({"error": f"Invalid or disallowed filename '{raw_filename}'."}),
-            status_code=400,
-            mimetype="application/json",
+        return _json_resp(
+            json.dumps({"error": f"Invalid or disallowed filename '{raw_filename}'."}), status_code=400
         )
 
     try:
+        user_id = _extract_user_id(req)
         cfg = load_config()
-        storage = _get_storage(cfg)
+        storage = _get_storage(cfg, user_id)
         storage.delete_document(safe_name)
+        storage.delete_index()  # immediately invalidate cached embeddings for this user
         logger.info("Deleted document: %s", safe_name)
     except Exception as exc:
         logger.exception("Error deleting document %s", safe_name)
-        return func.HttpResponse(
-            json.dumps({"error": "Could not delete document.", "detail": str(exc)}),
-            status_code=500,
-            mimetype="application/json",
+        return _json_resp(
+            json.dumps({"error": "Could not delete document.", "detail": str(exc)}), status_code=500
         )
 
-    return func.HttpResponse(
+    return _json_resp(
         json.dumps({
             "message": f"Document '{safe_name}' deleted successfully. "
                        "The index will be rebuilt automatically on the next query.",
             "filename": safe_name,
-        }, indent=2),
-        status_code=200,
-        mimetype="application/json",
+        }, indent=2)
     )
 
 
@@ -289,7 +289,7 @@ def delete_document(req: func.HttpRequest) -> func.HttpResponse:
 # Query endpoint
 # ---------------------------------------------------------------------------
 
-@app.route(route="query", methods=["GET", "POST"])
+@app.route(route="query", methods=["GET", "POST", "OPTIONS"])
 async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
     """
     HTTP trigger — accepts a legal question and returns multi-agent analysis.
@@ -297,6 +297,9 @@ async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
     GET  /api/query?question=What+are+the+NDA+obligations
     POST /api/query  body: {"question": "...", "top_k": 3}
     """
+    if req.method == "OPTIONS":
+        return _preflight()
+
     # --- Parse input ---
     question: str = req.params.get("question", "").strip()
     top_k: int = int(req.params.get("top_k", 3))
@@ -307,53 +310,38 @@ async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
             question = body.get("question", question).strip()
             top_k = int(body.get("top_k", top_k))
         except ValueError:
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid JSON body."}),
-                status_code=400,
-                mimetype="application/json",
-            )
+            return _json_resp(json.dumps({"error": "Invalid JSON body."}), status_code=400)
 
     if not question:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing 'question' parameter."}),
-            status_code=400,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": "Missing 'question' parameter."}), status_code=400)
 
     # --- Short-circuit: return a friendly reply for greetings / small talk ---
     if _is_smalltalk(question):
-        return func.HttpResponse(
+        return _json_resp(
             json.dumps({
                 "question": question,
                 "context_chunks": [],
                 "agent_responses": [],
                 "final_answer": _SMALLTALK_REPLY,
-            }, ensure_ascii=False, indent=2),
-            status_code=200,
-            mimetype="application/json",
+            }, ensure_ascii=False, indent=2)
         )
 
     # --- Load config & run pipeline ---
     try:
+        user_id = _extract_user_id(req)
         cfg = load_config()
         openai_client = create_azure_client(cfg)
-        chunks = retrieve_context(cfg, openai_client, question, top_k=top_k)
+        chunks = retrieve_context(cfg, openai_client, question, top_k=top_k, user_prefix=user_id)
         context = format_context(chunks)
         model_client = build_model_client(cfg)
         result = await run_agentic_chat_api(model_client, question, context)
     except ValueError as exc:
         logger.error("Configuration error: %s", exc)
-        return func.HttpResponse(
-            json.dumps({"error": str(exc)}),
-            status_code=500,
-            mimetype="application/json",
-        )
+        return _json_resp(json.dumps({"error": str(exc)}), status_code=500)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error processing question: %s", question)
-        return func.HttpResponse(
-            json.dumps({"error": "Internal server error.", "detail": str(exc)}),
-            status_code=500,
-            mimetype="application/json",
+        return _json_resp(
+            json.dumps({"error": "Internal server error.", "detail": str(exc)}), status_code=500
         )
 
     # --- Return response ---
@@ -363,8 +351,4 @@ async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
         "context_chunks": context_sources,
         **result,
     }
-    return func.HttpResponse(
-        json.dumps(response_body, ensure_ascii=False, indent=2),
-        status_code=200,
-        mimetype="application/json",
-    )
+    return _json_resp(json.dumps(response_body, ensure_ascii=False, indent=2))

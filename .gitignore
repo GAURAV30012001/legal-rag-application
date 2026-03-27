@@ -22,7 +22,6 @@ build/
 data/index.json
 
 # VS Code
-.vscode/
 
 # OS
 .DS_Store
@@ -33,3 +32,5 @@ Front_End_Application/node_modules/
 
 # Azure Function local secrets (contains real keys — never commit)
 local.settings.json
+
+.python_packages

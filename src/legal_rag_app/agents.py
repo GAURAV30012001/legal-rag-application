@@ -19,32 +19,36 @@ def _make_agent(name: str, system_message: str, model_client: AzureOpenAIChatCom
 
 
 def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroupChat:
-    """Create the four-agent legal team with a round-robin chat strategy."""
+    """Create the four-agent analysis team with a round-robin chat strategy."""
     retriever = _make_agent(
         "Retriever",
         (
-            "You are a Retrieval Specialist. Your job is to read the provided context chunks carefully "
-            "and summarise the most relevant facts that help answer the user's legal question. "
-            "Do not give legal advice yourself; just highlight the key facts from the context."
+            "You are a Retrieval Specialist. Read the provided context chunks carefully "
+            "and summarise the most relevant facts that directly help answer the user's question. "
+            "Do not answer the question yourself — extract and highlight the key information from the context. "
+            "Adapt to the document domain (legal, technical, HR, financial, etc.)."
         ),
         model_client,
     )
 
     analyst = _make_agent(
-        "LegalAnalyst",
+        "Analyst",
         (
-            "You are a Legal Analyst. Using the context and the Retriever's summary, provide a structured "
-            "legal analysis: identify applicable clauses, obligations, and potential interpretations. "
+            "You are a Document Analyst. Using the context and the Retriever's summary, provide a structured "
+            "analysis relevant to the user's question. Identify key points, obligations, definitions, "
+            "requirements, or findings from the documents — adapting your analysis to the document domain. "
             "Cite context chunks using [1], [2], etc. Flag any ambiguities or assumptions."
         ),
         model_client,
     )
 
-    compliance = _make_agent(
-        "ComplianceOfficer",
+    reviewer = _make_agent(
+        "Reviewer",
         (
-            "You are a Compliance Officer. Review the Legal Analyst's findings and identify compliance risks, "
-            "regulatory obligations, and any gaps or red flags the organisation should act on. "
+            "You are a Critical Reviewer. Review the Analyst's findings and identify any risks, gaps, "
+            "edge cases, caveats, or important considerations the user should be aware of. "
+            "Adapt your review to the document domain — for legal docs highlight compliance risks, "
+            "for technical docs highlight implementation concerns, etc. "
             "Be specific and reference the source chunks."
         ),
         model_client,
@@ -53,9 +57,10 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     summarizer = _make_agent(
         "Summarizer",
         (
-            "You are a Legal Summarizer. Consolidate all previous agent outputs into a clear, concise final "
-            "answer for the user. Cite the relevant context chunk numbers in brackets. "
-            "End with: 'DISCLAIMER: This output is for informational purposes only and does not constitute legal advice.'"
+            "You are a Summarizer. Consolidate all previous agent outputs into a clear, concise final "
+            "answer for the user. Be direct and helpful. Cite the relevant context chunk numbers in brackets. "
+            "If the question cannot be answered from the provided documents, clearly state that and suggest "
+            "what additional information would be needed."
         ),
         model_client,
     )
@@ -64,7 +69,7 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     termination = MaxMessageTermination(max_messages=5)
 
     return RoundRobinGroupChat(
-        participants=[retriever, analyst, compliance, summarizer],
+        participants=[retriever, analyst, reviewer, summarizer],
         termination_condition=termination,
     )
 
@@ -97,7 +102,9 @@ async def run_agentic_chat_api(
     """Async entry point for the Azure Function — returns structured dict."""
     team = build_team(model_client)
     task = (
-        "You are a team of specialised legal agents. Work together to answer the question below.\n"
+        "You are a team of document analysis agents. Work together to answer the question below "
+        "based solely on the provided context. The documents may cover any domain — legal, technical, "
+        "HR, financial, engineering, etc. Adapt your analysis to the document content.\n"
         "Use the retrieved context and cite chunk numbers like [1], [2].\n\n"
         f"QUESTION: {question}\n\n"
         f"RETRIEVED CONTEXT:\n{context}"
@@ -109,7 +116,7 @@ async def run_agentic_chat_api(
     for msg in result.messages:
         source = getattr(msg, "source", None)
         content = getattr(msg, "content", "")
-        if source and source != "user":
+        if source and source not in ("user", "User"):
             agent_responses.append({"agent": source, "message": content})
             if source == "Summarizer":
                 final_answer = content

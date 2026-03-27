@@ -6,3 +6,13 @@ __pycache__
 local.settings.json
 *.pyc
 .vscode
+# Exclude stray host.json inside src/ — only the root host.json should be deployed
+src/host.json
+src/*.egg-info
+src/**/__pycache__
+# Dev/test artifacts
+test_documents
+upload_kb_to_blob.py
+data
+EXPLANATION.md
+Front_End_Application

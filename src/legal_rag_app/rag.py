@@ -70,7 +70,7 @@ def _index_needs_rebuild(saved_meta: Dict, current_meta: Dict) -> bool:
     return saved_meta != current_meta
 
 
-def build_or_load_index(cfg: AppConfig, client: AzureOpenAI) -> List[Chunk]:
+def build_or_load_index(cfg: AppConfig, client: AzureOpenAI, user_prefix: str = "") -> List[Chunk]:
     storage = StorageBackend(
         connection_string=cfg.storage_connection_string,
         kb_dir=cfg.knowledge_base_dir,
@@ -79,6 +79,7 @@ def build_or_load_index(cfg: AppConfig, client: AzureOpenAI) -> List[Chunk]:
         index_container=cfg.storage_container_index,
         index_blob_name=cfg.index_blob_name,
         allowed_extensions=_SUPPORTED_EXTENSIONS,
+        user_prefix=user_prefix,
     )
 
     docs_meta = storage.list_documents()
@@ -126,8 +127,8 @@ def retrieve_top_k(chunks: List[Chunk], query_embedding: List[float], top_k: int
     return [chunk for _, chunk in scored[:top_k]]
 
 
-def retrieve_context(cfg: AppConfig, client: AzureOpenAI, question: str, top_k: int = 3) -> List[Chunk]:
-    chunks = build_or_load_index(cfg, client)
+def retrieve_context(cfg: AppConfig, client: AzureOpenAI, question: str, top_k: int = 3, user_prefix: str = "") -> List[Chunk]:
+    chunks = build_or_load_index(cfg, client, user_prefix=user_prefix)
     query_embedding = get_embedding(client, cfg.azure_openai_embeddings_deployment, question)
     return retrieve_top_k(chunks, query_embedding, top_k=top_k)
 

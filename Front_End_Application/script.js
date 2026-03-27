@@ -34,26 +34,52 @@ const BACKEND_URL = window.location.hostname === "localhost"
   ? "http://localhost:7071/api"
   : HOSTED_BACKEND_URL;
 
-/* ========= Default welcome message ========= */
-const WELCOME_MSG = `Hello! I'm the **Legal RAG Assistant** 👋
+/* ========= Per-user identity (isolated doc namespace) ========= */
+const LS_USER_ID_KEY = "legalrag.userId.v1";
+function _generateUUID() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+function getUserId() {
+  let id = localStorage.getItem(LS_USER_ID_KEY);
+  if (!id) {
+    id = _generateUUID();
+    localStorage.setItem(LS_USER_ID_KEY, id);
+  }
+  return id;
+}
+const USER_ID = getUserId();
 
-I can help you query and analyse your uploaded legal documents — contracts, NDAs, compliance policies, SLAs, and more.
+/* ========= Default welcome message ========= */
+const WELCOME_MSG = `Hello! I'm the **RAG Document Assistant** 👋
+
+I can help you query and analyse any documents you upload — legal contracts, technical specs, HR policies, compliance documents, and more.
 
 **To get started:**
-1. Click **📄 Manage Docs** in the sidebar to upload your legal documents (**.md, .txt, .pdf, .docx**)
+1. Click **📄 Manage Docs** in the sidebar to upload your documents (**.md, .txt, .pdf, .docx**)
 2. Once uploaded, ask me any question about the documents
 
 **Example questions you can ask:**
-- *"What are the confidentiality obligations in the NDA?"*
-- *"What is the notice period in the employment contract?"*
-- *"What GDPR rights does a data subject have?"*
-- *"What compliance risks exist in the SLA?"*
+- *"What are the key obligations in this contract?"*
+- *"Summarise the main points of this policy."*
+- *"What are the technical requirements mentioned?"*
+- *"What risks or gaps exist in this document?"*
 
 How can I help you today?`;
 
 /* ========= Format agent API response as readable markdown ========= */
 function agentIcon(name) {
-  const icons = { Retriever: "📋", LegalAnalyst: "⚖️", ComplianceOfficer: "🛡️", Summarizer: "📝" };
+  const icons = {
+    Retriever: "📋",
+    Analyst: "⚖️",
+    Reviewer: "🛡️",
+    Summarizer: "📝",
+    // legacy names (backward compat with old responses)
+    LegalAnalyst: "⚖️",
+    ComplianceOfficer: "🛡️",
+  };
   return icons[name] || "🤖";
 }
 
@@ -621,7 +647,7 @@ async function sendMessage(e) {
     try {
       const resp = await fetch(BACKEND_URL + "/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": USER_ID },
         body: JSON.stringify({ question: message, top_k: 3 })
       });
 
@@ -669,7 +695,9 @@ async function loadDocumentList() {
   if (!listEl) return;
   listEl.innerHTML = "<em>Loading...</em>";
   try {
-    const resp = await fetch(BACKEND_URL + "/documents");
+    const resp = await fetch(BACKEND_URL + "/documents", {
+      headers: { "X-User-Id": USER_ID }
+    });
     const data = await resp.json();
     if (!data.documents || data.documents.length === 0) {
       listEl.innerHTML = "<em>No documents in knowledge base.</em>";
@@ -707,6 +735,7 @@ async function uploadDocument() {
       formData.append("file", file, file.name);
       resp = await fetch(BACKEND_URL + "/upload", {
         method: "POST",
+        headers: { "X-User-Id": USER_ID },
         body: formData
       });
     } else {
@@ -714,7 +743,7 @@ async function uploadDocument() {
       const content = await file.text();
       resp = await fetch(BACKEND_URL + "/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": USER_ID },
         body: JSON.stringify({ filename: file.name, content })
       });
     }
@@ -735,7 +764,7 @@ async function deleteDocument(filename) {
   try {
     const resp = await fetch(BACKEND_URL + "/documents/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-User-Id": USER_ID },
       body: JSON.stringify({ filename })
     });
     const data = await resp.json();
