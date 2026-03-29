@@ -23,10 +23,13 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     retriever = _make_agent(
         "Retriever",
         (
-            "You are a Retrieval Specialist. Read the provided context chunks carefully "
-            "and summarise the most relevant facts that directly help answer the user's question. "
-            "Do not answer the question yourself — extract and highlight the key information from the context. "
-            "Adapt to the document domain (legal, technical, HR, financial, etc.)."
+            "You are a Retrieval Specialist with two modes:\n"
+            "MODE 1 — DOCUMENT QUERY: When the user is asking about uploaded document content, "
+            "extract and summarise the most relevant facts from the provided context chunks. "
+            "Adapt to the domain (legal, technical, HR, financial, etc.).\n"
+            "MODE 2 — OFF-TOPIC / CONVERSATIONAL: When the user's message is a greeting, personal "
+            "question, small talk, or general knowledge question unrelated to the documents, "
+            "output exactly the single token: OFF_TOPIC"
         ),
         model_client,
     )
@@ -34,10 +37,11 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     analyst = _make_agent(
         "Analyst",
         (
-            "You are a Document Analyst. Using the context and the Retriever's summary, provide a structured "
-            "analysis relevant to the user's question. Identify key points, obligations, definitions, "
-            "requirements, or findings from the documents — adapting your analysis to the document domain. "
-            "Cite context chunks using [1], [2], etc. Flag any ambiguities or assumptions."
+            "You are a Document Analyst with two modes:\n"
+            "MODE 1 — DOCUMENT QUERY: If the Retriever provided document facts (not OFF_TOPIC), "
+            "give structured analysis — key points, obligations, definitions, findings from the documents. "
+            "Cite chunks as [1], [2], etc. Adapt to the document domain.\n"
+            "MODE 2 — OFF-TOPIC: If the Retriever output OFF_TOPIC, output only: OFF_TOPIC"
         ),
         model_client,
     )
@@ -45,11 +49,11 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     reviewer = _make_agent(
         "Reviewer",
         (
-            "You are a Critical Reviewer. Review the Analyst's findings and identify any risks, gaps, "
-            "edge cases, caveats, or important considerations the user should be aware of. "
-            "Adapt your review to the document domain — for legal docs highlight compliance risks, "
-            "for technical docs highlight implementation concerns, etc. "
-            "Be specific and reference the source chunks."
+            "You are a Critical Reviewer with two modes:\n"
+            "MODE 1 — DOCUMENT QUERY: If prior agents provided document analysis (not OFF_TOPIC), "
+            "identify risks, gaps, caveats, or important considerations. Reference source chunks. "
+            "Adapt to the domain — legal: compliance risks; technical: implementation concerns, etc.\n"
+            "MODE 2 — OFF-TOPIC: If prior agents output OFF_TOPIC, output only: OFF_TOPIC"
         ),
         model_client,
     )
@@ -57,10 +61,14 @@ def build_team(model_client: AzureOpenAIChatCompletionClient) -> RoundRobinGroup
     summarizer = _make_agent(
         "Summarizer",
         (
-            "You are a Summarizer. Consolidate all previous agent outputs into a clear, concise final "
-            "answer for the user. Be direct and helpful. Cite the relevant context chunk numbers in brackets. "
-            "If the question cannot be answered from the provided documents, clearly state that and suggest "
-            "what additional information would be needed."
+            "You are a Summarizer with two modes:\n"
+            "MODE 1 — DOCUMENT QUERY: If prior agents provided document analysis, consolidate their "
+            "findings into a clear, direct final answer. Cite relevant chunk numbers in brackets. "
+            "If the question cannot be answered from the documents, say so honestly.\n"
+            "MODE 2 — OFF-TOPIC: If prior agents output OFF_TOPIC, IGNORE the documents entirely. "
+            "Respond naturally and helpfully as a friendly AI assistant, directly answering what the "
+            "user actually asked. Do NOT cite documents, do NOT mention context chunks, "
+            "do NOT reference any uploaded files."
         ),
         model_client,
     )
@@ -94,6 +102,33 @@ def run_agentic_chat(
     asyncio.run(_run_chat(model_client, question, context))
 
 
+async def run_direct_response_api(
+    model_client: AzureOpenAIChatCompletionClient,
+    question: str,
+) -> dict:
+    """Single-agent direct response — used when no documents are uploaded."""
+    agent = AssistantAgent(
+        name="Assistant",
+        model_client=model_client,
+        system_message=(
+            "You are a helpful, friendly AI document assistant. "
+            "You help users analyse their uploaded documents. "
+            "When no documents are available, respond naturally and helpfully, "
+            "and guide the user to upload documents when relevant to their question."
+        ),
+    )
+    result = await agent.run(task=question)
+    content = ""
+    for msg in result.messages:
+        if getattr(msg, "source", None) == "Assistant":
+            content = getattr(msg, "content", "")
+    return {
+        "question": question,
+        "agent_responses": [{"agent": "Assistant", "message": content}],
+        "final_answer": content,
+    }
+
+
 async def run_agentic_chat_api(
     model_client: AzureOpenAIChatCompletionClient,
     question: str,
@@ -102,12 +137,19 @@ async def run_agentic_chat_api(
     """Async entry point for the Azure Function — returns structured dict."""
     team = build_team(model_client)
     task = (
-        "You are a team of document analysis agents. Work together to answer the question below "
-        "based solely on the provided context. The documents may cover any domain — legal, technical, "
-        "HR, financial, engineering, etc. Adapt your analysis to the document content.\n"
-        "Use the retrieved context and cite chunk numbers like [1], [2].\n\n"
+        "You are a team of intelligent assistant agents.\n\n"
+        "STEP 1 — CLASSIFY the question before doing anything else:\n"
+        "  • DOCUMENT QUERY: The user is asking about the content, details, analysis, or information "
+        "in the uploaded documents.\n"
+        "  • OFF-TOPIC / CONVERSATIONAL: The user is greeting, making small talk, asking a personal "
+        "question, or asking about something completely unrelated to the documents.\n\n"
+        "STEP 2 — RESPOND based on classification:\n"
+        "  • DOCUMENT QUERY → Retriever extracts relevant facts; Analyst analyses; Reviewer reviews; "
+        "Summarizer delivers a document-based answer with chunk citations [1], [2], etc.\n"
+        "  • OFF-TOPIC → Retriever outputs OFF_TOPIC; all agents pass it through; "
+        "Summarizer responds naturally as a friendly assistant WITHOUT any document references.\n\n"
         f"QUESTION: {question}\n\n"
-        f"RETRIEVED CONTEXT:\n{context}"
+        f"RETRIEVED CONTEXT (only use if this is a document query):\n{context}"
     )
     result = await team.run(task=task)
 

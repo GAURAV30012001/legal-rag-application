@@ -15,7 +15,7 @@ if _src_path not in sys.path:
 
 import azure.functions as func
 
-from legal_rag_app.agents import run_agentic_chat_api
+from legal_rag_app.agents import run_agentic_chat_api, run_direct_response_api
 from legal_rag_app.config import build_model_client, load_config
 from legal_rag_app.rag import create_azure_client, format_context, retrieve_context
 from legal_rag_app.storage import StorageBackend
@@ -330,14 +330,19 @@ async def legal_query(req: func.HttpRequest) -> func.HttpResponse:
     try:
         user_id = _extract_user_id(req)
         cfg = load_config()
-        openai_client = create_azure_client(cfg)
-        chunks = retrieve_context(cfg, openai_client, question, top_k=top_k, user_prefix=user_id)
-        context = format_context(chunks)
         model_client = build_model_client(cfg)
-        result = await run_agentic_chat_api(model_client, question, context)
-    except ValueError as exc:
-        logger.error("Configuration error: %s", exc)
-        return _json_resp(json.dumps({"error": str(exc)}), status_code=500)
+
+        try:
+            openai_client = create_azure_client(cfg)
+            chunks = retrieve_context(cfg, openai_client, question, top_k=top_k, user_prefix=user_id)
+            context = format_context(chunks)
+            result = await run_agentic_chat_api(model_client, question, context)
+        except ValueError as no_docs_exc:
+            # No documents uploaded yet — respond directly without document context
+            logger.info("No documents for user %s — using direct response: %s", user_id, no_docs_exc)
+            result = await run_direct_response_api(model_client, question)
+            chunks = []
+
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error processing question: %s", question)
         return _json_resp(
